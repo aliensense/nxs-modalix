@@ -1,0 +1,16 @@
+# nxs-modalix: the camera connectors' bus names, the camera devices'
+# group and the capture buffers' DMA guard on a SiMa.ai Modalix.
+#
+# The connectors are branches of the camera I2C mux the bus overlay
+# boots, matchable only by adapter name; the i2c-* wildcard absorbs the
+# parent's enumeration number, however many digits it has.
+SUBSYSTEM=="i2c-dev", ATTR{name}=="i2c-*-mux (chan_id 0)", SYMLINK+="i2c-cam0"
+SUBSYSTEM=="i2c-dev", ATTR{name}=="i2c-*-mux (chan_id 1)", SYMLINK+="i2c-cam1"
+# The camera nodes run as the operator: the capture and ISP nodes, the
+# media devices and the DMA heaps their buffers come from are the video
+# group's.
+SUBSYSTEM=="video4linux", GROUP="video", MODE="0660"
+SUBSYSTEM=="media", GROUP="video", MODE="0660"
+SUBSYSTEM=="dma_heap", GROUP="video", MODE="0660"
+# The capture buffers' DMA guard: four channels of eight buffers fit the CMA pool.
+ACTION=="add", SUBSYSTEM=="video4linux", ATTR{name}=="raw-capture.*", RUN+="/bin/sh -c 'echo 32 > /sys/module/simaai_v4l2_video/parameters/video_guard_mb'"

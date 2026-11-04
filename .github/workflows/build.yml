@@ -1,0 +1,88 @@
+# The release build of the public tree: a tag named after the SiMa release
+# this branch builds for (2.1.3) builds the package natively on an arm64
+# runner in the branch's container and publishes it with the source tarball
+# and the checksums.
+name: Build
+
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+
+jobs:
+  package:
+    # The public mirror builds; the private repository only exports.
+    if: github.repository == 'aliensense/nxs-modalix'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    permissions:
+      contents: write
+
+    env:
+      TAG: ${{ github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gate — the tag is this branch's SiMa release
+        run: |
+          set -euo pipefail
+          release="$(sed -n 's/^SIMA_RELEASE="\(.*\)"/\1/p' build/builder.sh)"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "$TAG" != "$release" ]; then
+            echo "::error::tag $TAG is not the SiMa release this tree builds for ($release)"
+            exit 1
+          fi
+          echo "RELEASE=$release" >> "$GITHUB_ENV"
+
+      - name: The slot install on a boot partition under a temporary root
+        run: build/test-kernel-slot.sh
+
+      - name: Build the package in the branch's container
+        run: |
+          set -euo pipefail
+          docker volume create nxs-modalix-work
+          docker build -t nxs-modalix-build docker/
+          docker run --rm -v nxs-modalix-work:/build -v "$PWD":/repo nxs-modalix-build \
+            /repo/build/builder.sh -P -k -m -c -b
+          ls -l output/
+          test -f "output/nxs-modalix_${RELEASE}_arm64.deb"
+
+      - name: Inspect the package
+        run: |
+          set -euo pipefail
+          dpkg-deb --info "output/nxs-modalix_${RELEASE}_arm64.deb"
+          dpkg-deb --contents "output/nxs-modalix_${RELEASE}_arm64.deb"
+
+      - name: Install and remove the package on a stand-in Modalix
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD":/repo:ro nxs-modalix-build \
+            /repo/build/test-package.sh "/repo/output/nxs-modalix_${RELEASE}_arm64.deb"
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The container wrote output/ as root; the runner takes it over. The
+          # source tarball lands there too, which the archive excludes, so tar
+          # never reads its own growing file.
+          sudo chown -R "$(id -u):$(id -g)" output
+          tar -czf "output/nxs-modalix-${TAG}-src.tar.gz" --exclude=.git --exclude=output .
+          ( cd output && sha256sum "nxs-modalix_${TAG}_arm64.deb" "nxs-modalix-${TAG}-src.tar.gz" > SHA256SUMS.txt )
+          nxs="$(sed -n 's/^#define[[:space:]]\{1,\}NXS_VERSION[[:space:]]\{1,\}"\([0-9.]\{1,\}\)"$/\1/p' nxs-drivers/drivers/media/i2c/nxs-csi2-map.h)"
+          # The package's section of the changelog is the release body.
+          awk -v v="${TAG}+nxs${nxs}" '
+            /^## \[/ { on = index($0, "## [" v "]") == 1; next }
+            on { print }' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no [${TAG}+nxs${nxs}] section"; exit 1
+          fi
+          printf '\nInstall: `sudo apt install ./nxs-modalix_%s_arm64.deb`\n' "$TAG" >> notes.md
+          gh release create "$TAG" --title "nxs-modalix ${TAG}" \
+            --notes-file notes.md \
+            "output/nxs-modalix_${TAG}_arm64.deb" "output/nxs-modalix-${TAG}-src.tar.gz" output/SHA256SUMS.txt \
+            || { gh release upload "$TAG" --clobber \
+                   "output/nxs-modalix_${TAG}_arm64.deb" "output/nxs-modalix-${TAG}-src.tar.gz" output/SHA256SUMS.txt \
+                 && gh release edit "$TAG" --title "nxs-modalix ${TAG}" --notes-file notes.md; }

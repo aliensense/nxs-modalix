@@ -1,0 +1,24 @@
+#!/bin/sh
+# The modules load on one kernel of one SiMa release, and the kernel installs
+# into U-Boot's second boot slot: another release, another kernel and an image
+# without the two slots are refused before anything is unpacked.
+set -e
+
+case "$1" in
+    install|upgrade)
+        release="$(dpkg-query -W -f='${Version}' simaai-palette-modalix 2>/dev/null || true)"
+        if [ -n "${release}" ] && [ "${release}" != "@SIMA_RELEASE@" ]; then
+            echo "@PACKAGE@: built for SiMa release @SIMA_RELEASE@; this host runs ${release}" >&2
+            exit 1
+        fi
+        if [ ! -d "/lib/modules/@KERNEL_RELEASE@/kernel" ]; then
+            echo "@PACKAGE@: built for kernel @KERNEL_RELEASE@; this host has no such kernel" >&2
+            exit 1
+        fi
+        if [ ! -d /boot/boot-0 ] || [ ! -d /boot/boot-1 ]; then
+            echo "@PACKAGE@: its kernel installs into U-Boot's second boot slot, and this image has no /boot/boot-0 and /boot/boot-1" >&2
+            exit 1
+        fi
+        ;;
+esac
+exit 0

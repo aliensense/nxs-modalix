@@ -1,0 +1,22 @@
+#!/bin/sh
+# The modules' index, the udev rules read and applied to the nodes that exist,
+# the DMA guard set on a running kernel that has it, then the kernel into the
+# boot slot the package owns (kernel-slot), its slot and dtbos lines printed.
+set -e
+
+case "$1" in
+    configure)
+        depmod -a "@KERNEL_RELEASE@"
+        if command -v udevadm >/dev/null 2>&1; then
+            udevadm control --reload || true
+            udevadm trigger --subsystem-match=i2c-dev --subsystem-match=video4linux \
+                --subsystem-match=media --subsystem-match=dma_heap || true
+        fi
+        guard=/sys/module/simaai_v4l2_video/parameters/video_guard_mb
+        if [ -w "${guard}" ]; then
+            echo 32 > "${guard}"
+        fi
+        /usr/lib/@PACKAGE@/kernel-slot install
+        ;;
+esac
+exit 0

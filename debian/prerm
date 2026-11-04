@@ -1,0 +1,11 @@
+#!/bin/sh
+# A removal puts SiMa's kernel back into the slot the package owns and boots
+# SiMa's slot next; an upgrade leaves the slot to the new package's postinst.
+set -e
+
+case "$1" in
+    remove|deconfigure)
+        /usr/lib/@PACKAGE@/kernel-slot remove
+        ;;
+esac
+exit 0

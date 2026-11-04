@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|purge)
+        depmod -a "@KERNEL_RELEASE@" 2>/dev/null || true
+        if command -v udevadm >/dev/null 2>&1; then
+            udevadm control --reload 2>/dev/null || true
+        fi
+        ;;
+esac
+if [ "$1" = purge ]; then
+    rm -rf /var/lib/@PACKAGE@
+fi
+exit 0

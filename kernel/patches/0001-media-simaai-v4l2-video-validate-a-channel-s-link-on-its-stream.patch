@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Aliensense <nxs@aliensense.com>
+Date: Sun, 1 Nov 2026 00:00:00 +0000
+Subject: [PATCH 1/3] media: simaai-v4l2-video: validate a channel's link on its own stream
+
+The DMA bridge routes channel N from its sink pad N, stream N, to its source
+pad VDMA_CHANNELS + N, stream N. v4l2vid_link_validate() asks the source pad
+for the format of stream 0, so only channel 0 validates. A capture node of
+channel 1 to 3 fails STREAMON with -EPIPE although its format matches, and a
+CSI port carries one virtual channel. Ask for the format of the channel's own
+stream.
+
+---
+ drivers/media/platform/simaai/simaai-v4l2-video.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/media/platform/simaai/simaai-v4l2-video.c b/drivers/media/platform/simaai/simaai-v4l2-video.c
+--- a/drivers/media/platform/simaai/simaai-v4l2-video.c
++++ b/drivers/media/platform/simaai/simaai-v4l2-video.c
+@@ -756,6 +756,13 @@
+ 
+ 	source_fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
+ 	source_fmt.pad = link->source->index;
++	/*
++	 * The bridge routes channel N from its sink pad N, stream N, to its
++	 * source pad VDMA_CHANNELS + N, stream N. A channel past the first
++	 * carries its format on its own stream, never on stream 0.
++	 */
++	if (link->source->index >= VDMA_CHANNELS)
++		source_fmt.stream = link->source->index - VDMA_CHANNELS;
+ 
+ 	ret = v4l2_subdev_call(source_sd, pad, get_fmt, NULL, &source_fmt);
+ 	if (ret < 0) {

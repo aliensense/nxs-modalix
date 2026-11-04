@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Aliensense <nxs@aliensense.com>
+Date: Sun, 1 Nov 2026 00:00:00 +0000
+Subject: [PATCH 2/3] media: simaai: guard the capture and scratch buffers against DMA overruns
+
+The camera DMA runs with "source ends the block" flow control, fixed in
+hardware. When the CSI glue loses a frame end, on an IPI overflow or a
+reset, the block runs on past the buffer into whatever the CMA pool holds
+next. Up to 12.7 frames were measured, always upward from the buffer start,
+and the overrun corrupts other processes' pages.
+
+Allocate a guard after every capture buffer (simaai_v4l2_video.video_guard_mb)
+and after each channel's scratch buffer (dw_axi_dmac_platform.scratch_guard_mb),
+48 MiB by default and 0 to turn it off. The DMA and bytesused keep sizeimage,
+so only the allocation grows. Both are writable at run time, so a host sizes
+the guard to what its CMA pool carries before a stream starts.
+
+---
+ drivers/media/platform/simaai/simaai-v4l2-video.c | 16 +++++++++++++++-
+ drivers/dma/dw-axi-dmac/dw-axi-dmac-platform.c | 22 ++++++++++++++++++----
+ 2 files changed, 33 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/media/platform/simaai/simaai-v4l2-video.c b/drivers/media/platform/simaai/simaai-v4l2-video.c
+--- a/drivers/media/platform/simaai/simaai-v4l2-video.c
++++ b/drivers/media/platform/simaai/simaai-v4l2-video.c
+@@ -513,6 +513,20 @@
+ 	.unlocked_ioctl = video_ioctl2,
+ 	.mmap = vb2_fop_mmap,
+ };
++
++/*
++ * Guard after every capture buffer. The camera DMA's flow control is fixed in
++ * hardware to "the source ends the block" (CH_CFG.TT_FC reads 4, writes are
++ * ignored), and the CSI glue loses the frame end on IPI overflows and resets,
++ * so a block runs on past the buffer: up to 12.7 frames (about 33 MB at
++ * 1920x1080 RAW10) measured, always upward from the buffer start. Without room
++ * for it the overrun lands in whatever CMA holds next, often other processes'
++ * pages. The DMA and bytesused still use sizeimage; only the allocation grows.
++ * 0 turns it off.
++ */
++static unsigned int video_guard_mb = 48;
++module_param(video_guard_mb, uint, 0644);
++MODULE_PARM_DESC(video_guard_mb, "MiB allocated after each capture buffer to absorb DMA overruns (0 = off)");
+ 
+ /*
+  * VideoBuffer2 operations
+@@ -555,7 +569,7 @@
+ 	if (*nbuffers < MIN_CAPTURE_BUFFERS)
+ 		*nbuffers = MIN_CAPTURE_BUFFERS;
+ 	*nplanes = 1;
+-	sizes[0] = size;
++	sizes[0] = size + PAGE_ALIGN((unsigned long)video_guard_mb << 20);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/dma/dw-axi-dmac/dw-axi-dmac-platform.c b/drivers/dma/dw-axi-dmac/dw-axi-dmac-platform.c
+--- a/drivers/dma/dw-axi-dmac/dw-axi-dmac-platform.c
++++ b/drivers/dma/dw-axi-dmac/dw-axi-dmac-platform.c
+@@ -1063,6 +1063,17 @@
+ 	return 0;
+ }
+ 
++/*
++ * Room after the video scratch buffer for DMA overruns. The channel's flow
++ * control is fixed in hardware to "source ends the block" (CH_CFG.TT_FC reads 4
++ * and ignores writes), so a lost CSI frame end lets a block run on for many
++ * frames; the scratch loop gets the same guard as the vb2 buffers
++ * (simaai-v4l2-video video_guard_mb).
++ */
++static unsigned int scratch_guard_mb = 48;
++module_param(scratch_guard_mb, uint, 0644);
++MODULE_PARM_DESC(scratch_guard_mb, "MiB allocated after the video scratch buffer to absorb DMA overruns (0 = off)");
++
+ int dw_axi_dma_arm_scratch(struct dma_chan *dchan, size_t size)
+ {
+ 	struct axi_dma_chan *chan = dchan_to_axi_dma_chan(dchan);
+@@ -1071,10 +1082,13 @@
+ 	unsigned long flags;
+ 	void *vaddr;
+ 	dma_addr_t scratch_dma;
++	size_t alloc;
+ 	int ret = 0;
+ 
+-	/* Provider owns the throwaway buffer: allocate it here, free it in teardown. */
+-	vaddr = dma_alloc_coherent(chan->chip->dev, size, &scratch_dma, GFP_KERNEL);
++	/* Provider owns the throwaway buffer: allocate it here, free it in teardown.
++	 * The block covers `size`; the guard after it only catches overruns. */
++	alloc = size + PAGE_ALIGN((size_t)scratch_guard_mb << 20);
++	vaddr = dma_alloc_coherent(chan->chip->dev, alloc, &scratch_dma, GFP_KERNEL);
+ 	if (!vaddr)
+ 		return -ENOMEM;
+ 
+@@ -1104,7 +1118,7 @@
+ 	chan->scratch_a = a;
+ 	chan->scratch_vaddr = vaddr;
+ 	chan->scratch_dma = scratch_dma;
+-	chan->scratch_size = size;
++	chan->scratch_size = alloc;	/* what teardown frees */
+ 	chan->has_scratch = true;
+ 	chan->reload_looping = false;
+ 	chan->ovf_quiesced = false;
+@@ -1113,7 +1127,7 @@
+ 
+ err_free_buf:
+ 	/* dma_free_coherent may sleep -- never call it under chan->vc.lock. */
+-	dma_free_coherent(chan->chip->dev, size, vaddr, scratch_dma);
++	dma_free_coherent(chan->chip->dev, alloc, vaddr, scratch_dma);
+ 	return ret;
+ }
+ EXPORT_SYMBOL_GPL(dw_axi_dma_arm_scratch);

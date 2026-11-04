@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- nxs-modalix: the camera nodes' transports, shared memory first, UDPv4 beside it. -->
+<dds xmlns="http://www.eprosima.com">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>nxs_shm</transport_id>
+        <type>SHM</type>
+        <segment_size>33554432</segment_size>
+      </transport_descriptor>
+      <transport_descriptor>
+        <transport_id>nxs_udp</transport_id>
+        <type>UDPv4</type>
+      </transport_descriptor>
+    </transport_descriptors>
+    <participant profile_name="nxs_camera_nodes" is_default_profile="true">
+      <rtps>
+        <userTransports>
+          <transport_id>nxs_shm</transport_id>
+          <transport_id>nxs_udp</transport_id>
+        </userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>

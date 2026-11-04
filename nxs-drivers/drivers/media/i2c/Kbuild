@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
+obj-$(CONFIG_VIDEO_NXS_CSI2) += nxs-csi2-core.o
+obj-$(CONFIG_VIDEO_NXS_CSI2) += nxs-csi2.o
+obj-$(CONFIG_VIDEO_NXS_CSI2) += nxs-hub-route.o

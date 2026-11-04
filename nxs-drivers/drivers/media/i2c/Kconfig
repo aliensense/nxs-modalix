@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config VIDEO_NXS_CSI2
+	tristate "Aliensense NXS camera map"
+	depends on I2C && VIDEO_DEV
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
+	select V4L2_FWNODE
+	help
+	  V4L2 sub-device driver for the camera map of an Aliensense NXS
+	  device, the unit on a camera pod or a smart camera. The device runs
+	  the image sensor. The driver builds one control per parameter row
+	  the map serves, commits a frame's exposure, gain and frame period
+	  as one write, and knows no sensor.
+
+	  An NXS Hub's output takes a register-free routing node, which
+	  reports each link's virtual channel to the receiver and starts the
+	  link's camera door. The host tool programs the Hub itself.
+
+	  To compile this driver as modules, choose M here: the modules will
+	  be called nxs-csi2-core, the map client the driver shares with the
+	  Jetson package, nxs-csi2, the sub-device, and nxs-hub-route, the
+	  Hub output's routing node.

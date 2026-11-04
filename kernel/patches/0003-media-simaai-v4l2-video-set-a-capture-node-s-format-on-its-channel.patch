@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Aliensense <nxs@aliensense.com>
+Date: Sun, 1 Nov 2026 00:00:00 +0000
+Subject: [PATCH 3/3] media: simaai-v4l2-video: set a capture node's format on its own channel
+
+vidioc_s_fmt_vid_cap() sets the DMA bridge's format on pad 0, stream 0,
+whatever channel the node captures. The bridge stores it as channel 0's
+format and passes it to the receiver's first pixel interface. A node of
+channel 1 therefore overwrites channel 0's format, and two channels carrying
+different codes, such as a monochrome Y10 camera beside a Bayer one, leave
+channel 0 with the code of whichever node was set last: its STREAMON fails
+with a code mismatch. Set the format on the channel's own sink pad and
+stream, so each node sets its channel and its pixel interface alone.
+
+---
+ drivers/media/platform/simaai/simaai-v4l2-video.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/simaai/simaai-v4l2-video.c b/drivers/media/platform/simaai/simaai-v4l2-video.c
+--- a/drivers/media/platform/simaai/simaai-v4l2-video.c
++++ b/drivers/media/platform/simaai/simaai-v4l2-video.c
+@@ -353,7 +353,14 @@
+ 	fmt.format.width = dev_fmt_pix->width;
+ 	fmt.format.height = dev_fmt_pix->height;
+ 	fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
+-	fmt.pad = 0;
++	/*
++	 * The node captures the bridge's channel ep_pad - VDMA_CHANNELS, whose
++	 * sink is the pad and the stream of that number. Pad 0 would set
++	 * channel 0's format, and the receiver's first pixel interface, whatever
++	 * channel the node captures.
++	 */
++	fmt.pad = dev->ep_pad - VDMA_CHANNELS;
++	fmt.stream = dev->ep_pad - VDMA_CHANNELS;
+ 	fmt.format.field = dev_fmt_pix->field;
+ 
+ 	ret = v4l2_subdev_call_state_active(dev->ep_sd, pad, set_fmt, &fmt);

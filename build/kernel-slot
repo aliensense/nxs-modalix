@@ -1,0 +1,187 @@
+#!/bin/sh
+# kernel-slot: the camera kernel package's kernel in a U-Boot boot slot beside SiMa's.
+#
+#   kernel-slot install   put the package's Image into the slot the package owns and boot it next
+#   kernel-slot remove    put SiMa's Image back into that slot and boot SiMa's slot next
+#   kernel-slot status    the slots' kernels, the running one, and U-Boot's variables
+#
+# U-Boot loads the kernel, the base tree and every overlay its `dtbos` names
+# from one slot, /boot/boot-0/ or /boot/boot-1/, the one its `boot_path`
+# names. At its first install the package owns the slot the running kernel
+# did not boot from, keeps SiMa's Image of that slot as Image.sima, and makes
+# U-Boot boot that slot. The other slot keeps SiMa's kernel. U-Boot's
+# environment is written with fw_setenv and read back with fw_printenv; where
+# they do not reach it, the U-Boot prompt's line is printed instead.
+set -eu
+
+ROOT="${NXS_MODALIX_ROOT:-}"
+BOOT="$ROOT/boot"
+IMAGE="$ROOT/usr/lib/nxs-modalix/Image"
+STATE_DIR="$ROOT/var/lib/nxs-modalix"
+STATE="$STATE_DIR/kernel-slot"
+VERSION_FILE="$ROOT/proc/version"
+# The build's user and host, in the package's Image banner and its /proc/version.
+MARKER="(nxs-modalix@"
+SLOTS="boot-0 boot-1"
+
+say() {
+    printf 'nxs-modalix: %s\n' "$*"
+}
+
+# A U-Boot variable; empty when unset or when the environment does not read.
+env_get() {
+    command -v fw_printenv >/dev/null 2>&1 || return 0
+    fw_printenv -n "$1" 2>/dev/null || true
+}
+
+# Whether fw_setenv wrote the variable and fw_printenv reads it back.
+env_set() {
+    command -v fw_setenv >/dev/null 2>&1 || return 1
+    fw_setenv "$1" "$2" >/dev/null 2>&1 || return 1
+    [ "$(env_get "$1")" = "$2" ]
+}
+
+other() {
+    if [ "$1" = boot-0 ]; then echo boot-1; else echo boot-0; fi
+}
+
+# Whether an Image is the package's build, by its banner.
+ours() {
+    [ -f "$1" ] && grep -a -q -F "$MARKER" "$1"
+}
+
+# The kernel an Image carries, as its banner names it.
+banner() {
+    if [ -f "$1" ]; then
+        grep -a -o -m 1 'Linux version [^ ]* ([^)]*)' "$1" || echo "an Image without a banner"
+    else
+        echo "no Image"
+    fi
+}
+
+# The slot U-Boot booted the running kernel from: the slot whose Image carries
+# the running kernel's banner, else the one boot_path names (U-Boot's default /boot-0/).
+running_slot() {
+    version="$(head -n 1 "$VERSION_FILE" 2>/dev/null || true)"
+    found=""
+    if [ -n "$version" ]; then
+        for slot in $SLOTS; do
+            if [ -f "$BOOT/$slot/Image" ] && grep -a -q -F "$version" "$BOOT/$slot/Image"; then
+                found="$found $slot"
+            fi
+        done
+    fi
+    case "$found" in
+        " boot-0"|" boot-1") echo "${found# }" ;;
+        *)
+            case "$(env_get boot_path)" in
+                /boot-1/) echo boot-1 ;;
+                *) echo boot-0 ;;
+            esac
+            ;;
+    esac
+}
+
+owned_slot() {
+    slot="$(cat "$STATE" 2>/dev/null || true)"
+    case "$slot" in
+        boot-0|boot-1) echo "$slot" ;;
+        *) echo "" ;;
+    esac
+}
+
+# The overlays dtbos names, each copied into the slot U-Boot boots from the
+# other slot where it is missing: U-Boot's boot script fails on an overlay its
+# slot lacks. The line that reports them.
+overlays() {
+    target="$1"
+    keep="$2"
+    dtbos="$(env_get dtbos)"
+    if [ -z "$dtbos" ]; then
+        say "dtbos names no overlay"
+        return 0
+    fi
+    missing=""
+    for dtbo in $dtbos; do
+        if [ ! -f "$BOOT/$target/$dtbo" ] && [ -f "$BOOT/$keep/$dtbo" ]; then
+            cp "$BOOT/$keep/$dtbo" "$BOOT/$target/$dtbo"
+        fi
+        [ -f "$BOOT/$target/$dtbo" ] || missing="$missing $dtbo"
+    done
+    sync
+    if [ -n "$missing" ]; then
+        say "dtbos: $dtbos; /boot/$target lacks$missing, and U-Boot's boot script fails on an overlay its slot lacks"
+    else
+        say "dtbos: $dtbos, each in /boot/$target"
+    fi
+}
+
+install_kernel() {
+    for slot in $SLOTS; do
+        [ -d "$BOOT/$slot" ] || { say "this image has no U-Boot boot slot /boot/$slot, so the kernel stays in /usr/lib/nxs-modalix"; exit 1; }
+    done
+    [ -f "$IMAGE" ] || { say "no kernel at $IMAGE"; exit 1; }
+    target="$(owned_slot)"
+    [ -n "$target" ] || target="$(other "$(running_slot)")"
+    keep="$(other "$target")"
+    # Room for the Image and the copy of SiMa's it replaces.
+    need=$(( $(wc -c < "$IMAGE") * 2 / 1024 + 1024 ))
+    free="$(df -Pk "$BOOT/$target" | awk 'NR == 2 { print $4 }')"
+    if [ "$free" -lt "$need" ]; then
+        say "/boot has $free KiB free and the kernel takes $need KiB in /boot/$target"
+        exit 1
+    fi
+    if [ -f "$BOOT/$target/Image" ] && ! ours "$BOOT/$target/Image" && [ ! -f "$BOOT/$target/Image.sima" ]; then
+        cp "$BOOT/$target/Image" "$BOOT/$target/Image.sima"
+    fi
+    cp "$IMAGE" "$BOOT/$target/Image.nxs"
+    mv "$BOOT/$target/Image.nxs" "$BOOT/$target/Image"
+    sync
+    mkdir -p "$STATE_DIR"
+    echo "$target" > "$STATE"
+    say "kernel $(banner "$BOOT/$target/Image") in /boot/$target, SiMa's $(banner "$BOOT/$keep/Image") kept in /boot/$keep"
+    overlays "$target" "$keep"
+    if env_set boot_path "/$target/" && env_set boot_prefixes "/$target/ /$keep/"; then
+        say "U-Boot boots /$target/ from the next boot (boot_path /$target/, boot_prefixes /$target/ /$keep/)"
+        say "reboot to run it: sudo reboot"
+    else
+        say "U-Boot's environment does not take fw_setenv here; at U-Boot's prompt: env set boot_path /$target/; env set boot_prefixes \"/$target/ /$keep/\"; saveenv; boot"
+    fi
+}
+
+remove_kernel() {
+    target="$(owned_slot)"
+    [ -n "$target" ] || return 0
+    keep="$(other "$target")"
+    if [ -f "$BOOT/$target/Image.sima" ]; then
+        mv "$BOOT/$target/Image.sima" "$BOOT/$target/Image"
+        sync
+    fi
+    rm -f "$STATE"
+    say "/boot/$target holds $(banner "$BOOT/$target/Image") again"
+    if env_set boot_path "/$keep/" && env_set boot_prefixes "/$keep/ /$target/"; then
+        say "U-Boot boots /$keep/ from the next boot (boot_path /$keep/, boot_prefixes /$keep/ /$target/)"
+    else
+        say "U-Boot's environment does not take fw_setenv here; at U-Boot's prompt: env set boot_path /$keep/; env set boot_prefixes \"/$keep/ /$target/\"; saveenv; boot"
+    fi
+}
+
+show_status() {
+    for slot in $SLOTS; do
+        echo "/boot/$slot: $(banner "$BOOT/$slot/Image")"
+    done
+    echo "running: /boot/$(running_slot): $(head -n 1 "$VERSION_FILE" 2>/dev/null || echo unknown)"
+    owned="$(owned_slot)"
+    echo "owned by nxs-modalix: ${owned:+/boot/}${owned:-none}"
+    echo "boot_path: $(env_get boot_path)"
+    echo "boot_prefixes: $(env_get boot_prefixes)"
+    echo "dtbos: $(env_get dtbos)"
+}
+
+case "${1:-}" in
+    install) install_kernel ;;
+    remove) remove_kernel ;;
+    status) show_status ;;
+    -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) echo "usage: kernel-slot install|remove|status" >&2; exit 2 ;;
+esac
