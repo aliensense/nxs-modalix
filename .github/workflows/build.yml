@@ -71,7 +71,7 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" output
           tar -czf "output/nxs-modalix-${TAG}-src.tar.gz" --exclude=.git --exclude=output .
           ( cd output && sha256sum "nxs-modalix_${TAG}_arm64.deb" "nxs-modalix-${TAG}-src.tar.gz" > SHA256SUMS.txt )
-          nxs="$(sed -n 's/^#define[[:space:]]\{1,\}NXS_VERSION[[:space:]]\{1,\}"\([0-9.]\{1,\}\)"$/\1/p' nxs-drivers/drivers/media/i2c/nxs-csi2-map.h)"
+          nxs="$(sed -n 's/^#define[[:space:]]\{1,\}NXS_VERSION[[:space:]]\{1,\}"\([0-9.]\{1,\}\)"$/\1/p' nxs-csi2/drivers/media/i2c/nxs-csi2-map.h)"
           # The package's section of the changelog is the release body.
           awk -v v="${TAG}+nxs${nxs}" '
             /^## \[/ { on = index($0, "## [" v "]") == 1; next }

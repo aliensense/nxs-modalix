@@ -37,7 +37,9 @@ ls output/
 ## Layout
 
 - `kernel/patches/`: the three fixes, each a patch on SiMa's tree with its reason. A capture node of a virtual channel past the first validates on its own stream. The capture buffers and the DMA's scratch buffer carry a guard against a block that runs past a lost frame end. A capture node sets its own channel's format.
-- `nxs-drivers/`: the camera door modules, vendored byte for byte from the public `nxs-drivers` repository.
+- `nxs-csi2/`: the camera door modules' sources and build files, the DKMS package `nxs-csi2`.
+- `tests/`: the modules' user-space test against a fake camera door, `make -C tests test`.
+- `Documentation/devicetree/`: the device-tree bindings of `nxs-csi2` and `nxs-hub-route`.
 - `build/kernel-slot`: the install of the kernel into a boot slot, its removal and its status.
 - `rootfs/`: the files the package installs under `/etc`.
 - `debian/`: the package's maintainer scripts.

@@ -1,0 +1,196 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/media/aliensense,hub-route.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Aliensense NXS Hub output routing node
+
+maintainers:
+  - Aliensense <support@aliensense.com>
+
+description: |
+  An NXS Hub's deserializer puts each link's camera on a virtual channel of
+  one CSI-2 output. The nxs host tool programs the deserializer over I2C, and
+  no kernel driver writes it. The routing node is the output's place in the
+  media graph: a sink port per link, joined to the link's camera door
+  (aliensense,nxs-csi2), and one source port toward the receiver. It has no
+  register and no bus address, so it sits outside any I2C bus.
+
+  Its frame descriptor names each link's stream. The stream's id and its
+  CSI-2 virtual channel are the link's aliensense,virtual-channel, and its
+  data type follows the camera door's format. A format set on a link's sink
+  goes to the link's camera door first. A receiver that routes by stream
+  starts a link through the node, which starts the link's camera door. A
+  receiver that takes virtual channel k on its pixel interface k finds every
+  link in the descriptor. The SiMa.ai Modalix receiver is such a receiver:
+  each capture node's stream starts its own link.
+
+properties:
+  compatible:
+    const: aliensense,hub-route
+
+  aliensense,links-start-together:
+    type: boolean
+    description:
+      The receiver asks for one stream to start all its pixel interfaces.
+      The output's first stream started then starts every routed link's
+      camera door, and its last stream stopped stops them. Without the
+      property each stream the receiver starts or stops starts or stops its
+      own link's camera door.
+
+  ports:
+    $ref: /schemas/graph.yaml#/properties/ports
+
+    patternProperties:
+      "^port@[0-3]$":
+        $ref: /schemas/graph.yaml#/$defs/port-base
+        unevaluatedProperties: false
+        description:
+          The sink of the NXS Hub's link n, A being 0 and B being 1. Its endpoint
+          joins the link's camera door.
+
+        properties:
+          endpoint:
+            $ref: /schemas/graph.yaml#/$defs/endpoint-base
+            unevaluatedProperties: false
+
+            properties:
+              aliensense,virtual-channel:
+                $ref: /schemas/types.yaml#/definitions/uint32
+                minimum: 0
+                maximum: 3
+                description:
+                  The CSI-2 virtual channel the NXS Hub puts the link's stream
+                  on. No two links share one.
+
+            required:
+              - remote-endpoint
+              - aliensense,virtual-channel
+
+    properties:
+      port@4:
+        $ref: /schemas/graph.yaml#/$defs/port-base
+        unevaluatedProperties: false
+        description:
+          The NXS Hub's CSI-2 output toward the receiver, with the lanes and the
+          one link frequency the NXS Hub runs it at.
+
+        properties:
+          endpoint:
+            $ref: /schemas/media/video-interfaces.yaml#
+            unevaluatedProperties: false
+
+            properties:
+              clock-lanes: true
+              clock-continuous: true
+
+              data-lanes:
+                minItems: 1
+                maxItems: 4
+
+              link-frequencies:
+                maxItems: 1
+
+            required:
+              - data-lanes
+              - link-frequencies
+
+    required:
+      - port@4
+
+required:
+  - compatible
+  - ports
+
+additionalProperties: false
+
+examples:
+  - |
+    /*
+     * An NXS Hub on a SiMa.ai Modalix's CAM0 connector: link A on virtual
+     * channel 1 and link B on channel 0, both into csi1 on two lanes at
+     * 1200 Mbps per lane.
+     */
+    hub-route {
+        compatible = "aliensense,hub-route";
+
+        ports {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            port@0 {
+                reg = <0>;
+
+                route_a: endpoint {
+                    remote-endpoint = <&door_a>;
+                    aliensense,virtual-channel = <1>;
+                };
+            };
+
+            port@1 {
+                reg = <1>;
+
+                route_b: endpoint {
+                    remote-endpoint = <&door_b>;
+                    aliensense,virtual-channel = <0>;
+                };
+            };
+
+            port@4 {
+                reg = <4>;
+
+                route_out: endpoint {
+                    remote-endpoint = <&csi10in>;
+                    clock-lanes = <0>;
+                    data-lanes = <1 2>;
+                    link-frequencies = /bits/ 64 <600000000>;
+                    clock-continuous;
+                };
+            };
+        };
+    };
+
+    csi {
+        port {
+            csi10in: endpoint {
+                remote-endpoint = <&route_out>;
+                clock-lanes = <0>;
+                data-lanes = <1 2>;
+            };
+        };
+    };
+
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        camera@33 {
+            compatible = "aliensense,nxs-csi2";
+            reg = <0x33>;
+            aliensense,deserializer;
+
+            port {
+                door_a: endpoint {
+                    remote-endpoint = <&route_a>;
+                    data-lanes = <1 2>;
+                    link-frequencies = /bits/ 64 <600000000>;
+                };
+            };
+        };
+
+        camera@35 {
+            compatible = "aliensense,nxs-csi2";
+            reg = <0x35>;
+            aliensense,deserializer;
+
+            port {
+                door_b: endpoint {
+                    remote-endpoint = <&route_b>;
+                    data-lanes = <1 2>;
+                    link-frequencies = /bits/ 64 <600000000>;
+                };
+            };
+        };
+    };
+...

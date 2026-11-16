@@ -1,0 +1,267 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/media/i2c/aliensense,nxs-csi2.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Aliensense NXS camera door
+
+maintainers:
+  - Aliensense <support@aliensense.com>
+
+description: |
+  A camera door of the NXS Device Interface: the camera door of a camera
+  pod, or an NXS Camera that serves the interface from its own logic. The
+  device runs the image sensor and presents it to the host as an I2C
+  register map with a 16-bit register address: a header with a region
+  table, the live cells of each parameter row, and a window onto its
+  description, which carries the rows and the modes it can stream. The
+  host driver builds its controls from the rows and knows no sensor
+  register. The contract is the NXS Device Interface manual.
+
+  The node sits at the address the host reaches the map at: 0x31, the
+  camera door, on a port the device shares with the host, or the alias a
+  deserializer's address translator maps it to behind a link.
+
+  A camera door whose node carries aliensense,modes, the camera's declared
+  mode, binds whether or not a device answers at its address, so the
+  receiver's capture chain binds with the links that have a camera. Until
+  a device answers, the door reports the declared mode, offers no row
+  control and refuses its stream start. It reads the door once a device
+  answers, and again when its description changed since, another
+  personality uploaded into the device. A door without the property waits for its map
+  before it binds.
+
+  A passive node is a camera whose stream reaches this host while another
+  host owns the bus the map answers on, the owner of the NXS Hub's control
+  bus. The driver of a passive node transfers nothing on I2C: it takes its
+  formats from the aliensense,modes property, and its stream start touches
+  nothing. A format set on a passive node selects the table's row of that
+  size and code. The driver takes that row's aliensense,rows and repaints
+  the ranges. A format no row matches leaves the mode as it is, a try
+  reports the mode in effect, and a set of another mode while the node
+  streams answers EBUSY. Two modes of one size and code are one format, and
+  the first row wins. It takes its rows from the aliensense,rows property
+  and offers on them the controls a camera door offers on the same rows. A
+  control set stores the value and transfers nothing, and every change
+  reaches a subscriber as a V4L2 control event. A passive node without
+  aliensense,rows offers the line's and the bus's controls alone. The
+  generator that writes the host's overlay from the rig's declaration
+  writes a passive node with aliensense,passive, one row of
+  aliensense,modes per mode of the camera's personality, the rows of each
+  mode in aliensense,rows, and the same port and endpoint as an active
+  node.
+
+  A passive node whose aliensense,rows name the exposure, 257, and the line,
+  264, gains an owner's side: three integer controls in one cluster, Owner
+  Line Time in nanoseconds and Owner Exposure Min and Owner Exposure Max in
+  microseconds, ids 0x00982903, 0x00982904 and 0x00982905. Its owner, the
+  program that runs the camera, writes the line in effect and the exposure's
+  minimum and maximum, in a control call of their own and never in the call
+  that sets the exposure. The driver takes the line as the line in effect
+  and the bounds as row 257's range, and converts them to the controls'
+  ranges in lines as it converts a camera door's cells. It transfers nothing
+  and holds no camera rule. A minimum above the maximum answers EINVAL to a
+  try and to a set alike. Owner Line Time runs from the mode's shortest
+  line, its active pixels at its pixel rate, to one second, so a shorter
+  paint reads that line. Before a paint the three read the line in effect
+  and the exposure row's bounds for the mode in effect, and a format set of
+  another mode returns that mode's tree rows until the owner paints again. A
+  camera door offers none of the three.
+
+properties:
+  compatible:
+    const: aliensense,nxs-csi2
+
+  reg:
+    maxItems: 1
+
+  aliensense,passive:
+    type: boolean
+    description:
+      Another host owns the bus the map answers on. The driver never
+      transfers on I2C and builds its formats from aliensense,modes.
+
+  aliensense,deserializer:
+    type: boolean
+    description:
+      The device sits behind a deserializer, and the endpoint is the
+      deserializer's CSI-2 output to the host. The output's data lanes and
+      its one link frequency carry every mode of the map, whatever lanes
+      and rate a mode names for the sensor on the serial link.
+
+  aliensense,monochrome:
+    type: boolean
+    description:
+      The camera's image sensor carries no colour filter array. Every mode
+      streams on its monochrome media bus code, Y8, Y10 or Y12, whatever
+      Bayer order the map reports for it. One personality serves both parts
+      of a sensor that comes in a colour and a monochrome part, and its map
+      reports the colour part's order.
+
+  aliensense,modes:
+    $ref: /schemas/types.yaml#/definitions/uint32-matrix
+    description:
+      The modes of a passive node, or the declared mode a camera door
+      reports until a device answers at its address, in the mode table's
+      order, the first one the default. A passive node runs the first mode
+      until a format set selects another. Six cells per mode. A mode's value
+      is its index.
+    minItems: 1
+    maxItems: 16
+    items:
+      items:
+        - description: Active pixels per line
+        - description: Active lines
+        - description: Bits per pixel on the wire, 8, 10 or 12
+        - description: |
+            The Bayer order before any flip, 0 RGGB, 1 GRBG, 2 GBRG,
+            3 BGGR, or 0xff for a monochrome stream
+        - description: The lane rate in megabits per second per lane
+        - description: CSI-2 lanes the mode drives
+
+  aliensense,rows:
+    $ref: /schemas/types.yaml#/definitions/uint32-matrix
+    description:
+      The parameter rows of a passive node, six cells per row of a mode. The
+      controls stand on the rows of the mode in effect, the mode the last
+      format set selected. Each takes its range from that mode's tuple, and
+      a row that mode does not list reads inactive. The line time's control
+      alone is a view of the line in effect, the owner's paint or else the
+      mode's line, but never shorter than its active pixels at its pixel
+      rate, and reads that line on a range of that one value, active only
+      while the mode lists 264. Each paint and each format set that moves
+      that line raises one control event on it, the line as its value and
+      its range, and a repeated paint raises none. The rows are the range
+      rows a camera door serves, by the id the NXS Device Interface manual
+      gives them, 257 the exposure in microseconds, 258 the frame rate in
+      milli-frames per second, 259 the analogue gain in millidecibels, 260
+      the black level in digital numbers and 264 the line time in
+      nanoseconds. The exposure, the rate, the gain and the black level take
+      a value, a step above 0. The line time is read-only, its minimum,
+      maximum and default equal and its step 0. The driver logs a row of
+      another id or shape and leaves it out. Without the property, a passive
+      node offers no row control.
+    minItems: 1
+    maxItems: 128
+    items:
+      items:
+        - description: The mode's index in aliensense,modes
+        - description: The row's parameter id
+        - description: The row's minimum, in the row's unit
+        - description: The row's maximum, in the row's unit
+        - description: The row's step, 0 for a read-only row
+        - description: The row's default, in the row's unit
+
+  port:
+    $ref: /schemas/graph.yaml#/$defs/port-base
+    additionalProperties: false
+
+    properties:
+      endpoint:
+        $ref: /schemas/media/video-interfaces.yaml#
+        unevaluatedProperties: false
+
+        properties:
+          data-lanes:
+            minItems: 1
+            maxItems: 4
+
+          link-frequencies: true
+
+        required:
+          - data-lanes
+          - link-frequencies
+
+required:
+  - compatible
+  - reg
+  - port
+
+dependentRequired:
+  aliensense,rows:
+    - aliensense,passive
+
+allOf:
+  - $ref: /schemas/media/video-interface-devices.yaml#
+  - if:
+      required:
+        - aliensense,passive
+    then:
+      required:
+        - aliensense,modes
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        camera@31 {
+            compatible = "aliensense,nxs-csi2";
+            reg = <0x31>;
+            orientation = <2>;
+            rotation = <0>;
+
+            port {
+                nxs_out: endpoint {
+                    remote-endpoint = <&csi_in>;
+                    data-lanes = <1 2 3 4>;
+                    link-frequencies = /bits/ 64 <1188000000>;
+                };
+            };
+        };
+    };
+  - |
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        camera@33 {
+            compatible = "aliensense,nxs-csi2";
+            reg = <0x33>;
+            aliensense,passive;
+            aliensense,modes = <1032 776 10 2 2376 4>,
+                               <2064 1552 12 2 2376 4>;
+            aliensense,rows = <0 257 4 19000 1 4216>,
+                              <0 258 12 215843 1 215843>,
+                              <0 259 0 48000 100 0>,
+                              <0 264 4902 4902 0 4902>,
+                              <1 257 8 33000 1 8000>,
+                              <1 258 12 72067 1 72067>,
+                              <1 259 0 30000 100 0>,
+                              <1 264 8215 8215 0 8215>;
+
+            port {
+                nxs_passive_out: endpoint {
+                    remote-endpoint = <&csi_in_b>;
+                    data-lanes = <1 2 3 4>;
+                    link-frequencies = /bits/ 64 <1188000000>;
+                };
+            };
+        };
+    };
+  - |
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        camera@35 {
+            compatible = "aliensense,nxs-csi2";
+            reg = <0x35>;
+            aliensense,deserializer;
+            aliensense,monochrome;
+            aliensense,modes = <1920 1080 10 0 2376 4>;
+
+            port {
+                nxs_link_b_out: endpoint {
+                    remote-endpoint = <&csi_in_hub>;
+                    data-lanes = <1 2>;
+                    link-frequencies = /bits/ 64 <1250000000>;
+                };
+            };
+        };
+    };
+...

@@ -3,7 +3,7 @@
 #
 # Builds the NXS camera package for one SiMa.ai Modalix release: SiMa's
 # public kernel tree at the release's commit with the patches under
-# kernel/patches/, the nxs-drivers modules against SiMa's headers package,
+# kernel/patches/, the nxs-csi2 modules against SiMa's headers package,
 # and the .deb that carries both. Linux-only; run inside the build container
 # (docker/Dockerfile), an arm64 Debian 12.
 #
@@ -11,7 +11,7 @@
 #   -P   pristine: re-extract SiMa's tree before the patches (release builds;
 #        a cached tree may carry a patch a past build applied)
 #   -k   kernel: fetch and patch SiMa's tree, build the Image
-#   -m   modules: build nxs-drivers against SiMa's headers package
+#   -m   modules: build nxs-csi2 against SiMa's headers package
 #   -c   collect the Image, its config and System.map, and the modules into OUTPUT_DIR
 #   -b   deb: nxs-modalix_<release>_arm64.deb, the released package (needs -k and -m)
 #   -h   this help
@@ -55,18 +55,18 @@ TREE_DIR="${WORK_DIR}/simaai-linux-${TREE_COMMIT}"
 HEADERS_DIR="${WORK_DIR}/headers"
 SIMA_CONFIG="${WORK_DIR}/config-${KERNEL_RELEASE}"
 KDIR="${HEADERS_DIR}/usr/src/linux-headers-${KERNEL_RELEASE}"
-MOD_BUILD="${WORK_DIR}/nxs-drivers"
+MOD_BUILD="${WORK_DIR}/nxs-csi2"
 OUTPUT_DIR="${OUTPUT_DIR:-${REPO_DIR}/output}"
 JOBS="${JOBS:-$(nproc)}"
 DEB_PACKAGE="nxs-modalix"
 # The package's version is SiMa's release and the NXS version, <release>+nxs<X.Y.Z>;
 # the NXS version comes from the vendored map header, generated from the NXS
 # firmware's VERSION file, its one source.
-MAP_HEADER="${REPO_DIR}/nxs-drivers/drivers/media/i2c/nxs-csi2-map.h"
+MAP_HEADER="${REPO_DIR}/nxs-csi2/drivers/media/i2c/nxs-csi2-map.h"
 NXS_VERSION="$(sed -n 's/^#define[[:space:]]\{1,\}NXS_VERSION[[:space:]]\{1,\}"\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)"$/\1/p' "${MAP_HEADER}")"
 [[ -n "${NXS_VERSION}" ]] || { echo "error: ${MAP_HEADER} carries no NXS_VERSION" >&2; exit 1; }
-DRIVER_PACKAGE="$(sed -n 's/^PACKAGE_NAME="\(.*\)"$/\1/p' "${REPO_DIR}/nxs-drivers/dkms.conf")"
-DRIVER_VERSION="$(sed -n 's/^PACKAGE_VERSION="\(.*\)"$/\1/p' "${REPO_DIR}/nxs-drivers/dkms.conf")"
+DRIVER_PACKAGE="$(sed -n 's/^PACKAGE_NAME="\(.*\)"$/\1/p' "${REPO_DIR}/nxs-csi2/dkms.conf")"
+DRIVER_VERSION="$(sed -n 's/^PACKAGE_VERSION="\(.*\)"$/\1/p' "${REPO_DIR}/nxs-csi2/dkms.conf")"
 DEB_VERSION="${SIMA_RELEASE}+nxs${NXS_VERSION}"
 DEB_MAINTAINER="${DEB_MAINTAINER:-Aliensense <nxs@aliensense.com>}"
 # The modules the package builds, and where it installs them under /lib/modules/<release>/.
@@ -158,7 +158,7 @@ build_modules() {
     headers
     rm -rf "${MOD_BUILD}"
     mkdir -p "${MOD_BUILD}"
-    rsync -a "${REPO_DIR}/nxs-drivers/" "${MOD_BUILD}/"
+    rsync -a "${REPO_DIR}/nxs-csi2/" "${MOD_BUILD}/"
     make -C "${MOD_BUILD}" KDIR="${KDIR}" W=1
     local ko
     for ko in ${MODULES}; do
@@ -209,7 +209,7 @@ deb() {
     install -m 0644 "${TREE_DIR}/System.map" "${root}/${lib}/System.map"
     install -m 0644 "${TREE_DIR}/.config" "${root}/${lib}/config"
     install -m 0755 "${REPO_DIR}/build/kernel-slot" "${root}/${lib}/kernel-slot"
-    rsync -a --exclude '.DS_Store' "${REPO_DIR}/nxs-drivers/" "${root}/${dkms}/"
+    rsync -a --exclude '.DS_Store' "${REPO_DIR}/nxs-csi2/" "${root}/${dkms}/"
     rsync -a --exclude '.DS_Store' "${REPO_DIR}/rootfs/" "${root}/"
     rsync -a --exclude '.DS_Store' "${REPO_DIR}/kernel" "${REPO_DIR}/docker" "${root}/${src}/"
     install -m 0755 "${REPO_DIR}/build/builder.sh" "${REPO_DIR}/build/kernel-slot" "${root}/${src}/build/"
